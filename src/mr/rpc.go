@@ -23,6 +23,43 @@ type ExampleReply struct {
 }
 
 // Add your RPC definitions here.
+type AskTaskArgs struct{
+
+}
+
+type AskTaskReply struct{
+	Task string
+	StartReduce bool
+}
+
+type AskReduceNumArgs struct{
+
+}
+
+type AskReduceNumReply struct{
+	ReduceNum int
+}
+
+type AskReduceArgs struct {
+}
+
+type AskReduceReply struct {
+	ReduceNum int
+}
+
+type MapSuccessArgs struct {
+	Task string
+}
+
+type MapSuccessReply struct {
+}
+
+type ReduceSuccessArgs struct {
+	ReduceNum int
+}
+
+type ReduceSuccessReply struct {
+}
 
 
 // Cook up a unique-ish UNIX-domain socket name
