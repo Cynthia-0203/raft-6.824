@@ -343,7 +343,8 @@ func (rf *Raft) AppendEntries(args *AppendEntryArgs, reply *AppendEntryReply) {
 		}
 	}	
 	// fmt.Printf("node%v is follower,start apply\n",rf.me)
-	rf.applyLogs()
+	// rf.applyLogs()
+	rf.applyCond.Signal()
 	reply.Term=rf.currentTerm
 	reply.Success=true
 }
@@ -351,23 +352,29 @@ func (rf *Raft) AppendEntries(args *AppendEntryArgs, reply *AppendEntryReply) {
 func (rf *Raft) applyLogs() {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	// fmt.Printf("node :%v,rf.lastApplied:%v,rf.commitIndex:%v\n",rf.me,rf.lastApplied,rf.commitIndex)
-    for rf.lastApplied < rf.commitIndex {
-		// fmt.Printf("node%v's rf.log in applier:%v\n",rf.me,rf.log)
-		
-        rf.lastApplied++
-		// fmt.Printf("rf.lastApplied:%v\n",rf.lastApplied)
-        applyMsg := ApplyMsg{
-            CommandValid: true,
-            CommandIndex: rf.lastApplied,
-            Command:      rf.log[rf.lastApplied].Command,
-        }
-		fmt.Printf("node%v apply msg:%v\n",rf.me,applyMsg.CommandIndex)
-        rf.applyCh <- applyMsg
-		
-		// fmt.Printf("node%v success\n",rf.me)
-    }
-	time.Sleep(50*time.Millisecond)
+	for !rf.killed(){
+		if rf.lastApplied >= rf.commitIndex{
+			rf.applyCond.Wait()
+		}
+		// fmt.Printf("node :%v,rf.lastApplied:%v,rf.commitIndex:%v\n",rf.me,rf.lastApplied,rf.commitIndex)
+		for rf.lastApplied < rf.commitIndex {
+			// fmt.Printf("node%v's rf.log in applier:%v\n",rf.me,rf.log)
+			
+			rf.lastApplied++
+			// fmt.Printf("rf.lastApplied:%v\n",rf.lastApplied)
+			applyMsg := ApplyMsg{
+				CommandValid: true,
+				CommandIndex: rf.lastApplied,
+				Command:      rf.log[rf.lastApplied].Command,
+			}
+			fmt.Printf("node%v apply msg:%v\n",rf.me,applyMsg.CommandIndex)
+			rf.applyCh <- applyMsg
+			
+			// fmt.Printf("node%v success\n",rf.me)
+		}
+		time.Sleep(50*time.Millisecond)
+	}
+	
 }
 
 
@@ -672,7 +679,8 @@ func (rf *Raft) sendHeartbeats() {
 				if newCommitIndex > rf.commitIndex && rf.log[newCommitIndex].Term == rf.currentTerm {
 					// fmt.Printf("start apply:%v\n",server)
 					rf.commitIndex=newCommitIndex
-					rf.applyLogs()
+					// rf.applyLogs()
+					rf.applyCond.Signal()
 				}
 				// fmt.Println(rf.commitIndex)
 				
