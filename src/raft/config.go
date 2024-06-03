@@ -164,6 +164,7 @@ func (cfg *config) applier(i int, applyCh chan ApplyMsg) {
 			// ignore other types of ApplyMsg
 		} else {
 			cfg.mu.Lock()
+			
 			err_msg, prevok := cfg.checkLogs(i, m)
 			cfg.mu.Unlock()
 			if m.CommandIndex > 1 && prevok == false {
@@ -504,8 +505,11 @@ func (cfg *config) nCommitted(index int) (int, interface{}) {
 			}
 			count += 1
 			cmd = cmd1
+			
 		}
 	}
+	// fmt.Printf("count:%v\n",count)
+	// fmt.Printf("cmd:%v\n",cmd)
 	return count, cmd
 }
 
@@ -564,10 +568,12 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 			cfg.mu.Lock()
 			if cfg.connected[starts] {
 				rf = cfg.rafts[starts]
+				
 			}
 			cfg.mu.Unlock()
 			if rf != nil {
 				index1, _, ok := rf.Start(cmd)
+				// fmt.Printf("ok:%v,index:%v\n",ok,index1)
 				if ok {
 					index = index1
 					break
