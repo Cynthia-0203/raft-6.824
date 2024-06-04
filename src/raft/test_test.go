@@ -887,6 +887,7 @@ func TestUnreliableAgree3C(t *testing.T) {
 	cfg.end()
 }
 
+//nextIndex
 func TestFigure8Unreliable3C(t *testing.T) {
 	servers := 5
 	cfg := make_config(t, servers, true, false)

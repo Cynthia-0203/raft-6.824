@@ -18,6 +18,7 @@ import (
 	// "math"
 	// "math/rand"
 
+	"bytes"
 	"fmt"
 	"sort"
 
@@ -29,6 +30,7 @@ import (
 	"time"
 
 	//	"6.5840/labgob"
+	"6.5840/labgob"
 	"6.5840/labrpc"
 )
 
@@ -123,12 +125,13 @@ func (rf *Raft) GetState() (int, bool) {
 func (rf *Raft) persist() {
 	// Your code here (3C).
 	// Example:
-	// w := new(bytes.Buffer)
-	// e := labgob.NewEncoder(w)
-	// e.Encode(rf.xxx)
-	// e.Encode(rf.yyy)
-	// raftstate := w.Bytes()
-	// rf.persister.Save(raftstate, nil)
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	e.Encode(rf.currentTerm)
+	e.Encode(rf.votedFor)
+	e.Encode(rf.log)
+	raftstate := w.Bytes()
+	rf.persister.Save(raftstate, nil)
 }
 
 
@@ -139,17 +142,18 @@ func (rf *Raft) readPersist(data []byte) {
 	}
 	// Your code here (3C).
 	// Example:
-	// r := bytes.NewBuffer(data)
-	// d := labgob.NewDecoder(r)
-	// var xxx
-	// var yyy
-	// if d.Decode(&xxx) != nil ||
-	//    d.Decode(&yyy) != nil {
-	//   error...
-	// } else {
-	//   rf.xxx = xxx
-	//   rf.yyy = yyy
-	// }
+	r := bytes.NewBuffer(data)
+	d := labgob.NewDecoder(r)
+	var currentTerm int
+	var votedFor int
+	var log []Entry
+	if d.Decode(&currentTerm) != nil ||d.Decode(&votedFor) != nil ||d.Decode(&log)!=nil{
+		fmt.Println("decode error")
+	} else {
+		rf.currentTerm = currentTerm
+		rf.votedFor = votedFor
+		rf.log = log
+	}
 }
 
 
@@ -196,43 +200,15 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.state = FOLLOWER
 		rf.currentTerm = args.Term
 		rf.votedFor = -1
+		
 	}
-	
-	
-	// if rf.votedFor == -1 || rf.votedFor == args.CandidateID {
-	// 	// candidate的日志必须比我的新
-	// 	// 1, 最后一条log，任期大的更新
-	// 	// 2，更长的log则更新
-	// 	currentLogIndex:=len(rf.log)-1
-	// 	currentLogTerm := rf.log[len(rf.log)-1].Term
-		
-	// 	if args.LastLogItem < currentLogTerm || args.LastLogIndex < currentLogIndex  {
-	// 		reply.VoteGranted=false
-	// 		reply.Term = rf.currentTerm
-	// 		return
-	// 	}
-
-	// 	rf.votedFor = args.CandidateID
-	// 	reply.Term = rf.currentTerm
-	// 	reply.VoteGranted = true
-		
-	// }else{
-	// 	reply.VoteGranted=false
-	// 	if rf.votedFor != args.CandidateID {
-	// 		return
-	// 	}else{
-	// 		rf.state=FOLLOWER
-	// 	}
-	// }
-
-	// rf.resetElectionTimer()
-	// rf.persist()
 	
 	if rf.votedFor == -1 || rf.votedFor == args.CandidateID {
         lastLogIndex := len(rf.log) - 1
         lastLogTerm := rf.log[lastLogIndex].Term
         if (args.LastLogItem > lastLogTerm) || (args.LastLogItem == lastLogTerm && args.LastLogIndex >= lastLogIndex) {
             rf.votedFor = args.CandidateID
+			
             reply.VoteGranted = true
         } else {
             reply.VoteGranted = false
@@ -245,6 +221,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
     if reply.VoteGranted {
         rf.resetElectionTimer()
     }
+	rf.persist()
 }
 
 type AppendEntryArgs struct{
@@ -276,8 +253,8 @@ func (rf *Raft) AppendEntries(args *AppendEntryArgs, reply *AppendEntryReply) {
         reply.Term = rf.currentTerm
         reply.Success = false
 		reply.AppendError=TermError
-		fmt.Printf("node%v false1\n",rf.me)
-		fmt.Printf("args.Term:%v rf.currentTerm:%v\n",args.Term,rf.currentTerm)
+		// fmt.Printf("node%v false1\n",rf.me)
+		// fmt.Printf("args.Term:%v rf.currentTerm:%v\n",args.Term,rf.currentTerm)
         return
     }
 	rf.resetElectionTimer()
@@ -308,7 +285,7 @@ func (rf *Raft) AppendEntries(args *AppendEntryArgs, reply *AppendEntryReply) {
 			fmt.Println("false3")
 			reply.AppendError=IndexNotExist
 			reply.ConflictIndex=rf.lastLogIndex()+1
-			fmt.Printf("reply.conficIndex:%v\n",reply.ConflictIndex)
+			// fmt.Printf("reply.conficIndex:%v\n",reply.ConflictIndex)
 			// fmt.Println("false3")
 			return
 		}
@@ -332,7 +309,7 @@ func (rf *Raft) AppendEntries(args *AppendEntryArgs, reply *AppendEntryReply) {
 	
 	
 	firstIndex := rf.getFirstLogIndex()
-	latestIndex := -1
+	// latestIndex := -1
 	for _,entry:=range args.Entries{
 		if entry.Index-firstIndex>=len(rf.log)||rf.log[entry.Index-firstIndex].Term!=entry.Term{
 			// rf.log=shrinkEntriesArray(append(rf.log[:entry.Index-firstIndex],entry))
@@ -341,11 +318,16 @@ func (rf *Raft) AppendEntries(args *AppendEntryArgs, reply *AppendEntryReply) {
 			// rf.commitIndex = entry.Index
 			// fmt.Printf("node%v,commitIndex:%v\n",rf.me,rf.commitIndex)
 			// fmt.Printf("node%v append log%v\n",rf.me,rf.log)
-			latestIndex = entry.Index
+			// latestIndex = entry.Index
 		}
 	}
-	if latestIndex != -1 {
-		rf.commitIndex = latestIndex
+	// if latestIndex != -1 {
+	// 	rf.commitIndex = latestIndex
+	// }
+	
+	// fmt.Printf("args.LeaderCommit:%v,rf.lastApplied:%v\n",args.LeaderCommit,rf.lastApplied)
+	if args.LeaderCommit>rf.commitIndex{
+		rf.commitIndex = min(args.LeaderCommit,len(rf.log)-1)
 		rf.applyCond.Signal()
 	}
 	// fmt.Printf("node%v is follower,start apply\n",rf.me)
@@ -353,6 +335,7 @@ func (rf *Raft) AppendEntries(args *AppendEntryArgs, reply *AppendEntryReply) {
 	
 	reply.Term=rf.currentTerm
 	reply.Success=true
+	rf.persist()
 }
 
 func (rf *Raft) applyLogs() {
@@ -367,18 +350,20 @@ func (rf *Raft) applyLogs() {
 			// fmt.Printf("node%v's rf.log in applier:%v\n",rf.me,rf.log)
 			
 			rf.lastApplied++
-			fmt.Printf("node%v,rf.lastApplied:%v,rf.commitIndex:%v\n",rf.me,rf.lastApplied,rf.commitIndex)
+			
+			// fmt.Printf("node%v,rf.lastApplied:%v,rf.commitIndex:%v\n",rf.me,rf.lastApplied,rf.commitIndex)
 			applyMsg := ApplyMsg{
 				CommandValid: true,
 				CommandIndex: rf.lastApplied,
 				Command:      rf.log[rf.lastApplied].Command,
 			}
-			fmt.Printf("node%v apply msg:%v\n",rf.me,applyMsg.CommandIndex)
+			// fmt.Printf("node%v apply msg:%v\n",rf.me,applyMsg.CommandIndex)
 			rf.applyCh <- applyMsg
 			
 			// fmt.Printf("node%v success\n",rf.me)
 		}
-		// time.Sleep(50*time.Millisecond)
+		rf.persist()
+		time.Sleep(50*time.Millisecond)
 	}
 	
 }
@@ -458,7 +443,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	// Your code here (2B).
 
 	if rf.killed() {
-		fmt.Println("node killed")
+		// fmt.Println("node killed")
 		return index, term, false
 	}
 
@@ -479,10 +464,12 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		Command: command,
 	}
 	rf.log = append(rf.log, appendLog)
+	rf.matchIndex[rf.me]= appendLog.Index
+	
 	// fmt.Printf("leader: node%v,current log:%v\n",rf.me,rf.log)
 	index = len(rf.log)-1
 	term = rf.currentTerm
-
+	rf.persist()
 	return index, term, isLeader
 }
 
@@ -535,7 +522,7 @@ func (rf *Raft) startElection() {
     rf.state = CANDIDATE
     rf.currentTerm++
     rf.votedFor = rf.me
-
+	
 
     currentTerm := rf.currentTerm
     lastLogIndex := 0
@@ -550,7 +537,7 @@ func (rf *Raft) startElection() {
     
 	
     votes := int32(1)
-    
+    rf.persist()
 	rf.resetElectionTimer()
     for i := range rf.peers {
         if i == rf.me {
@@ -578,15 +565,18 @@ func (rf *Raft) startElection() {
 						
                         if rf.state == CANDIDATE && rf.currentTerm == currentTerm {
 							rf.state = LEADER
-							fmt.Printf("node%v become leader\n",rf.me)
+							// fmt.Printf("node%v become leader\n",rf.me)
                             rf.sendHeartbeats()
+							
                         }
                     }
                 } else if reply.Term > currentTerm {
                     rf.currentTerm = reply.Term
                     rf.state = FOLLOWER
                     rf.votedFor = -1
+					
                 }
+				rf.persist()
             }
         }(i)
     }
@@ -629,7 +619,7 @@ func (rf *Raft) sendHeartbeats() {
 			nextIndex:=rf.nextIndex[server]
 			args.Entries = rf.log[nextIndex:]
 			// fmt.Printf("node%v,entries:%v\n",server,args.Entries)
-			fmt.Printf("node%v args.entries:%v\n",server,args.Entries)
+			// fmt.Printf("node%v args.entries:%v\n",server,args.Entries)
 			reply := &AppendEntryReply{}
 			// fmt.Printf("args:%v\n",args)
 			// fmt.Printf("%v start append entries,prevLogIndex is %v,append entries is %v\n",server,args.PreLogIndex,args.Entries)
@@ -647,12 +637,14 @@ func (rf *Raft) sendHeartbeats() {
 			if rf.currentTerm != args.Term {
 				// fmt.Printf("node %v change to follower when append entries\n",rf.me)
 				rf.state=FOLLOWER
+				rf.persist()
 				return
 			}
 			//发现更大的term，本结点是旧leader
 			if reply.Term > rf.currentTerm {
 				rf.currentTerm = reply.Term
 				rf.state = FOLLOWER
+				rf.persist()
 				// fmt.Printf("node %v change to follower when append entries\n",rf.me)
 				// rf.persist()
 				return
@@ -676,15 +668,16 @@ func (rf *Raft) sendHeartbeats() {
 					return matchIndexSlice[i] < matchIndexSlice[j]
 				})
 			
-			
+				fmt.Printf("matchIndexSlice:%v\n",matchIndexSlice)
 				// newCommitIndex := matchIndexSlice[len(rf.peers)/2]
 				// newCommitIndex:=rf.nextIndex[server]-1
 				newCommitIndex := matchIndexSlice[len(rf.peers)/2]
-				// fmt.Printf("newcommitIndex:%v,rf.commitIndex:%v\n",newCommitIndex,rf.commitIndex)
+				fmt.Printf("newcommitIndex:%v,rf.commitIndex:%v\n",newCommitIndex,rf.commitIndex)
 				
 				//不能提交不属于当前term的日志
 				if newCommitIndex > rf.commitIndex && rf.log[newCommitIndex].Term == rf.currentTerm {
 					// fmt.Printf("start apply:%v\n",server)
+					// fmt.Println("leader change commitIndex,start apply")
 					rf.commitIndex=newCommitIndex
 					// rf.applyLogs()
 					rf.applyCond.Signal()
@@ -697,10 +690,12 @@ func (rf *Raft) sendHeartbeats() {
 				switch reply.AppendError{
 				case PreLogIndexError:
 					//
+					fmt.Println("false1")
 					// fmt.Println("there1")
 				case TermNotMatch:
 					rf.nextIndex[server]=reply.ConflictIndex
 					fmt.Println(reply.ConflictIndex)
+					
 					// fmt.Println("there2")
 				case IndexNotExist:
 					rf.nextIndex[server]=reply.ConflictIndex
@@ -708,6 +703,7 @@ func (rf *Raft) sendHeartbeats() {
 
 				}
 			}
+			rf.persist()
 			
 		}(i)
 	}
