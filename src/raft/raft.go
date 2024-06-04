@@ -19,7 +19,8 @@ import (
 	// "math/rand"
 
 	"fmt"
-	
+	"sort"
+
 	// "sort"
 
 	"math/rand"
@@ -265,8 +266,8 @@ type AppendEntryReply struct{
 }
 
 func (rf *Raft) AppendEntries(args *AppendEntryArgs, reply *AppendEntryReply) {
-   	// rf.mu.Lock()
-   	// defer rf.mu.Unlock()
+   	rf.mu.Lock()
+   	defer rf.mu.Unlock()
 	// fmt.Printf("node%v in appendEntries\n",rf.me)
 	reply.ConflictTerm = -1
 	reply.ConflictIndex = -1
@@ -331,20 +332,25 @@ func (rf *Raft) AppendEntries(args *AppendEntryArgs, reply *AppendEntryReply) {
 	
 	
 	firstIndex := rf.getFirstLogIndex()
+	latestIndex := -1
 	for _,entry:=range args.Entries{
 		if entry.Index-firstIndex>=len(rf.log)||rf.log[entry.Index-firstIndex].Term!=entry.Term{
 			// rf.log=shrinkEntriesArray(append(rf.log[:entry.Index-firstIndex],entry))
 			rf.log = append(rf.log[:entry.Index-firstIndex], entry)
 			// fmt.Printf("len:%v\n",len(rf.log[:entry.Index-firstIndex]))
-			rf.commitIndex = entry.Index
+			// rf.commitIndex = entry.Index
 			// fmt.Printf("node%v,commitIndex:%v\n",rf.me,rf.commitIndex)
 			// fmt.Printf("node%v append log%v\n",rf.me,rf.log)
-			break
+			latestIndex = entry.Index
 		}
-	}	
+	}
+	if latestIndex != -1 {
+		rf.commitIndex = latestIndex
+		rf.applyCond.Signal()
+	}
 	// fmt.Printf("node%v is follower,start apply\n",rf.me)
 	// rf.applyLogs()
-	rf.applyCond.Signal()
+	
 	reply.Term=rf.currentTerm
 	reply.Success=true
 }
@@ -356,12 +362,12 @@ func (rf *Raft) applyLogs() {
 		if rf.lastApplied >= rf.commitIndex{
 			rf.applyCond.Wait()
 		}
-		// fmt.Printf("node :%v,rf.lastApplied:%v,rf.commitIndex:%v\n",rf.me,rf.lastApplied,rf.commitIndex)
+		// // fmt.Printf("node :%v,rf.lastApplied:%v,rf.commitIndex:%v\n",rf.me,rf.lastApplied,rf.commitIndex)
 		for rf.lastApplied < rf.commitIndex {
 			// fmt.Printf("node%v's rf.log in applier:%v\n",rf.me,rf.log)
 			
 			rf.lastApplied++
-			// fmt.Printf("rf.lastApplied:%v\n",rf.lastApplied)
+			fmt.Printf("node%v,rf.lastApplied:%v,rf.commitIndex:%v\n",rf.me,rf.lastApplied,rf.commitIndex)
 			applyMsg := ApplyMsg{
 				CommandValid: true,
 				CommandIndex: rf.lastApplied,
@@ -372,7 +378,7 @@ func (rf *Raft) applyLogs() {
 			
 			// fmt.Printf("node%v success\n",rf.me)
 		}
-		time.Sleep(50*time.Millisecond)
+		// time.Sleep(50*time.Millisecond)
 	}
 	
 }
@@ -572,7 +578,7 @@ func (rf *Raft) startElection() {
 						
                         if rf.state == CANDIDATE && rf.currentTerm == currentTerm {
 							rf.state = LEADER
-							// fmt.Printf("node%v become leader\n",rf.me)
+							fmt.Printf("node%v become leader\n",rf.me)
                             rf.sendHeartbeats()
                         }
                     }
@@ -658,21 +664,22 @@ func (rf *Raft) sendHeartbeats() {
 				
 				rf.nextIndex[server] +=len(args.Entries)
 				// fmt.Printf("nextIndex:%v\n",rf.nextIndex[server])
-				// rf.matchIndex[server] = rf.nextIndex[server]-1
+				rf.matchIndex[server] = rf.nextIndex[server]-1
 				// // 提交到哪个位置需要根据中位数来判断，中位数表示过半提交的日志位置，
 				// // 每次提交日志向各结点发送的日志并不完全一样，不能光靠是否发送成功来判断
-				// matchIndexSlice := make([]int, len(rf.peers))
+				matchIndexSlice := make([]int, len(rf.peers))
 				// for index, matchIndex := range rf.matchIndex {
 				// 	matchIndexSlice[index] = matchIndex
 				// }
-				// copy(matchIndexSlice,rf.matchIndex)
-				// sort.Slice(matchIndexSlice, func(i, j int) bool {
-				// 	return matchIndexSlice[i] < matchIndexSlice[j]
-				// })
+				copy(matchIndexSlice,rf.matchIndex)
+				sort.Slice(matchIndexSlice, func(i, j int) bool {
+					return matchIndexSlice[i] < matchIndexSlice[j]
+				})
 			
 			
 				// newCommitIndex := matchIndexSlice[len(rf.peers)/2]
-				newCommitIndex:=rf.nextIndex[server]-1
+				// newCommitIndex:=rf.nextIndex[server]-1
+				newCommitIndex := matchIndexSlice[len(rf.peers)/2]
 				// fmt.Printf("newcommitIndex:%v,rf.commitIndex:%v\n",newCommitIndex,rf.commitIndex)
 				
 				//不能提交不属于当前term的日志
@@ -707,20 +714,20 @@ func (rf *Raft) sendHeartbeats() {
 }
 	 
 
-func (rf *Raft) getIndexByTerm(term int) int{
-	i, j := 0, len(rf.log)-1
-	for i < j {
-		mid := (i + j) / 2
-		if rf.log[mid].Term > term {
-			j = mid
-		} else if rf.log[mid].Term < term{
-			i = mid + 1
-		}else{
-			return mid
-		}
-	}
-	return 0
-}
+// func (rf *Raft) getIndexByTerm(term int) int{
+// 	i, j := 0, len(rf.log)-1
+// 	for i < j {
+// 		mid := (i + j) / 2
+// 		if rf.log[mid].Term > term {
+// 			j = mid
+// 		} else if rf.log[mid].Term < term{
+// 			i = mid + 1
+// 		}else{
+// 			return mid
+// 		}
+// 	}
+// 	return 0
+// }
 func (rf *Raft) lastLogIndex() int {
 	return len(rf.log) - 1
 }
