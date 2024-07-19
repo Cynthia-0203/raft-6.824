@@ -179,7 +179,7 @@ func TestRPCBytes3B(t *testing.T) {
 	cfg.end()
 }
 
-//--------------------------------------------------
+// --------------------------------------------------
 // test just failure of followers.
 func TestFollowerFailure3B(t *testing.T) {
 	servers := 3
@@ -888,7 +888,6 @@ func TestUnreliableAgree3C(t *testing.T) {
 	cfg.end()
 }
 
-
 func TestFigure8Unreliable3C(t *testing.T) {
 	servers := 5
 	cfg := make_config(t, servers, true, false)
@@ -1152,8 +1151,10 @@ func snapcommon(t *testing.T, name string, disconnect bool, reliable bool, crash
 			cfg.connect(victim)
 			cfg.one(rand.Int(), servers, true)
 			leader1 = cfg.checkOneLeader()
+
 		}
 		if crash {
+
 			cfg.start1(victim, cfg.applierSnap)
 			cfg.connect(victim)
 			cfg.one(rand.Int(), servers, true)
