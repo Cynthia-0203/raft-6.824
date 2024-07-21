@@ -19,7 +19,7 @@ import (
 	// "math/rand"
 
 	"bytes"
-
+	// "fmt"
 
 	// "fmt"
 	"sort"
@@ -58,9 +58,9 @@ const (
 
 // 心跳间隔和选举超时范围
 const (
-	HeartbeatInterval  = 100 * time.Millisecond
+	HeartbeatInterval  = 30 * time.Millisecond
 	ElectionTimeoutMin = 300 * time.Millisecond
-	ElectionTimeoutMax = 800 * time.Millisecond
+	ElectionTimeoutMax = 600 * time.Millisecond
 )
 
 type Entry struct {
@@ -143,8 +143,8 @@ func (rf *Raft) readPersist(data []byte) {
 	var log []Entry
 	var lastIncludedIndex int
 	var lastIncludedTerm int
-
-	if d.Decode(&currentTerm) != nil || d.Decode(&votedFor) != nil || d.Decode(&log) != nil || d.Decode(&lastIncludedIndex) != nil || d.Decode(&lastIncludedTerm) != nil {
+	var lastApplies int
+	if d.Decode(&currentTerm) != nil || d.Decode(&votedFor) != nil || d.Decode(&log) != nil || d.Decode(&lastIncludedIndex) != nil || d.Decode(&lastIncludedTerm) != nil ||d.Decode(&lastApplies) != nil{
 		// fmt.Println("decode error")
 	} else {
 		rf.currentTerm = currentTerm
@@ -152,6 +152,7 @@ func (rf *Raft) readPersist(data []byte) {
 		rf.log = log
 		rf.lastIncludeIndex = lastIncludedIndex
 		rf.lastIncludeTerm = lastIncludedTerm
+		rf.lastApplied =lastApplies
 	}
 }
 
@@ -163,6 +164,7 @@ func (rf *Raft) persistStateAndSnapshot() {
 	e.Encode(rf.log)
 	e.Encode(rf.lastIncludeIndex)
 	e.Encode(rf.lastIncludeTerm)
+	e.Encode(rf.lastApplied)
 	state := w.Bytes()
 	rf.persister.Save(state, rf.snapshot)
 }
@@ -431,16 +433,10 @@ func (rf *Raft) InstallSnapShot(args *InstallSnapshotArgs, reply *InstallSnapsho
 
 	rf.resetHeartbeatTimer()
 
-	if rf.lastIncludeIndex >= args.LastIncludeIndex {
+	if rf.lastIncludeIndex >= args.LastIncludeIndex || args.LastIncludeIndex <= rf.commitIndex{
 		// fmt.Printf("In installSnapShot node%v  rf.lastIncludeIndex:%v >= args.LastIncludeIndex:%v return\n",rf.me,rf.lastIncludeIndex,args.LastIncludeIndex)
 		rf.mu.Unlock()
 		// fmt.Printf("node%v release mutex when installsnapshot..\n",rf.me)
-		return
-	}
-
-	if args.LastIncludeIndex <= rf.commitIndex {
-		// fmt.Printf("In installSnapShot node%v  args.LastIncludeIndex:%v <= rf.commitIndex:%v return\n",rf.me,args.LastIncludeIndex,rf.commitIndex)
-		rf.mu.Unlock()
 		return
 	}
 
@@ -451,37 +447,35 @@ func (rf *Raft) InstallSnapShot(args *InstallSnapshotArgs, reply *InstallSnapsho
 		rf.log = []Entry{
 			{Index: args.LastIncludeIndex, Term: args.LastIncludeTerm},
 		}
-		rf.persistStateAndSnapshot()
+		
 	} else {
 		// fmt.Printf("In installSnapShot node%v  maxLocalLogIndex:%v >= args.LastIncludeIndex:%v\n",rf.me,maxLocalLogIndex,args.LastIncludeIndex)
 		rf.log = rf.log[args.LastIncludeIndex-rf.lastIncludeIndex:]
-		rf.persistStateAndSnapshot()
+		
 	}
-
+	
 	rf.lastIncludeIndex = args.LastIncludeIndex
 	rf.lastIncludeTerm = args.LastIncludeTerm
 	index := args.LastIncludeIndex
 	rf.commitIndex = index
 	rf.lastApplied = index
 	rf.snapshot = args.Data
-
+	rf.persistStateAndSnapshot()
 	rf.mu.Unlock()
-	go func() {
-		applyMsg:=ApplyMsg{
-			SnapshotValid: true,
-			Snapshot:      args.Data,
-			SnapshotTerm:  args.LastIncludeTerm,
-			SnapshotIndex: args.LastIncludeIndex,
-		}
-		rf.applyCh<-applyMsg
-		// fmt.Printf("node%v apply snapmsgIndex:%v\n", rf.me, applyMsg.SnapshotIndex)
-	}()
 	
+	applyMsg:=ApplyMsg{
+		SnapshotValid: true,
+		Snapshot:      args.Data,
+		SnapshotTerm:  args.LastIncludeTerm,
+		SnapshotIndex: args.LastIncludeIndex,
+	}
+	rf.applyCh<-applyMsg
+	// fmt.Printf("node%v apply snapmsgIndex:%v\n", rf.me, applyMsg.SnapshotIndex)
 }
 
-func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int, snapshot []byte) bool {
-	return true
-}
+// func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int, snapshot []byte) bool {
+// 	return true
+// }
 
 func (rf *Raft) applyLogs() {
 	for !rf.killed() {
@@ -496,13 +490,15 @@ func (rf *Raft) applyLogs() {
 		
 		for i := rf.lastApplied + 1; i <= rf.commitIndex; i++ {
 			// fmt.Printf("node%v lastIncludeIndex:%v\n",rf.me,rf.lastIncludeIndex)
+			// fmt.Printf("node%v commitIndex:%v\n",rf.me,rf.commitIndex)
 			// fmt.Printf("node%v lastApplied:%v commitIndex:%v\n",rf.me,rf.lastApplied,rf.commitIndex)
-			if i <= rf.lastIncludeIndex{
+			if i < rf.lastIncludeIndex{
 				// fmt.Printf("node%v log:%v\n",rf.me,rf.log)
 				rf.lastApplied = rf.lastIncludeIndex
 				continue
 			}
 			// fmt.Printf("node%v index:%v\n",rf.me,i)
+		
 			applyMsg := ApplyMsg{
 				CommandValid: true,
 				Command:      rf.log[i-rf.lastIncludeIndex].Command,
@@ -525,6 +521,8 @@ func (rf *Raft) applyLogs() {
 	}
 	
 }
+
+
 
 // 示例代码，发送 RequestVote RPC 到服务器。
 // server 是目标服务器在 rf.peers[] 中的索引。
@@ -606,6 +604,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	rf.log = append(rf.log, appendLog)
 	// fmt.Printf("leader%v'log%v\n",rf.me,rf.log)
 	rf.matchIndex[rf.me] = appendLog.Index
+	rf.nextIndex[rf.me]=appendLog.Index+1
 	// fmt.Printf("leader:%v matchIndex change to %v \n",rf.me,rf.matchIndex[rf.me])
 	index = appendLog.Index
 	term = rf.currentTerm
@@ -805,12 +804,17 @@ func (rf *Raft) sendHeartbeats() {
 				}
 
 				//调整该Server的matchIndex 与 nextIndex
+				rf.mu.Lock()
 				rf.nextIndex[server] = arg.LastIncludeIndex+1
 				rf.matchIndex[server] = arg.LastIncludeIndex
+				rf.mu.Unlock()
 				// fmt.Printf("node:%v matchIndex change to %v \n",server,rf.matchIndex[server])
 				// fmt.Printf("node%v's nextIndex change to %v\n",server,rf.nextIndex[server])
 			} else {
-				args.Entries = rf.log[nextIndex-rf.lastIncludeIndex:]
+				if nextIndex-rf.lastIncludeIndex<len(rf.log){
+					args.Entries = rf.log[nextIndex-rf.lastIncludeIndex:]
+				}
+			
 				// if args.Entries!=[]Entry{
 				// 	fmt.Printf("node%v append")
 				// }
@@ -851,14 +855,17 @@ func (rf *Raft) sendHeartbeats() {
 				}
 
 				if reply.Success {
+					rf.mu.Lock()
 					// fmt.Printf("node%v append successfully\n",server)
 					rf.matchIndex[server] = args.PreLogIndex + len(args.Entries)
 					rf.nextIndex[server] = rf.matchIndex[server] + 1
+					
 					// fmt.Printf("node:%v matchIndex change to %v \n",server,rf.matchIndex[server])
 					// fmt.Printf("node%v's nextIndex change to %v\n",server,rf.nextIndex[server])
 					// 提交到哪个位置需要根据中位数来判断，中位数表示过半提交的日志位置，
 					matchIndexSlice := make([]int, len(rf.peers))
 					copy(matchIndexSlice, rf.matchIndex)
+					rf.mu.Unlock()
 					// fmt.Printf("leader%v matchIndex:%v\n",rf.me,matchIndexSlice)
 					sort.Slice(matchIndexSlice, func(i, j int) bool {
 						return matchIndexSlice[i] < matchIndexSlice[j]
@@ -888,14 +895,19 @@ func (rf *Raft) sendHeartbeats() {
 								break
 							}
 						}
+						rf.mu.Lock()
 						if conflictIndex != -1 {
+							
+							
 							rf.nextIndex[server] = conflictIndex + 1
+							
 							// fmt.Printf("node%v's nextIndex change to %v\n",server,rf.nextIndex[server])
 						} else {
 							rf.nextIndex[server] = reply.ConflictIndex
 							// fmt.Printf("node%v's nextIndex change to %v\n",server,rf.nextIndex[server])
 
 						}
+						rf.mu.Unlock()
 					}
 
 				}
@@ -978,9 +990,11 @@ func Make(peers []*labrpc.ClientEnd, me int, persister *Persister, applyCh chan 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
 	rf.snapshot=rf.persister.ReadSnapshot()
+	
 	// fmt.Printf("make node%v\n",rf.me)
 	// start ticker goroutine to start elections
-	// rf.lastApplied=rf.lastIncludeIndex
+	rf.lastApplied=rf.lastIncludeIndex
+
 	go rf.ticker()
 	go rf.applyLogs()
 	return rf
